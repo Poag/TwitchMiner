@@ -769,12 +769,13 @@ class Twitch(object):
 
     def __get_drops_dashboard(self, status=None):
         response = self.post_gql_request(GQLOperations.ViewerDropsDashboard)
-        campaigns = (
-            response.get("data", {})
-            .get("currentUser", {})
-            .get("dropCampaigns", [])
-            or []
-        )
+        # "data" can be null (for example when Twitch answers with only an "errors" list)
+        data = (response.get("data") if isinstance(response, dict) else None) or {}
+        campaigns = (data.get("currentUser") or {}).get("dropCampaigns") or []
+        if not campaigns and isinstance(response, dict) and response.get("errors"):
+            logger.warning(
+                f"The drops dashboard request failed, Twitch said: {str(response['errors'])[:300]}"
+            )
 
         if status is not None:
             campaigns = (
@@ -890,11 +891,16 @@ class Twitch(object):
 
         return sorted(indexes, key=lambda i: 0 if is_priority(i) else 1)
 
-    def __record_games(self, campaigns_details):
-        """Store the games that currently offer drops so they can be picked on the analytics page."""
+    def __record_games(self, campaign_dicts):
+        """Store the games that currently offer drops so they can be picked on the analytics page.
+
+        campaign_dicts: campaign objects from the inventory, the drops dashboard and the
+        campaign details. The same campaign can appear in several of them; it is counted once.
+        Returns the number of games found."""
         games = {}
-        for details in campaigns_details:
-            if not details:
+        seen_campaigns = set()
+        for details in campaign_dicts:
+            if not isinstance(details, dict):
                 continue
             game = details.get("game") or {}
             game_id = game.get("id")
@@ -904,7 +910,11 @@ class Twitch(object):
             entry = games.setdefault(
                 game_id, {"id": game_id, "name": name, "campaigns": 0, "ends_at": None}
             )
-            entry["campaigns"] += 1
+            campaign_id = details.get("id")
+            if campaign_id is None or campaign_id not in seen_campaigns:
+                entry["campaigns"] += 1
+                if campaign_id is not None:
+                    seen_campaigns.add(campaign_id)
             try:
                 ends_at = calendar.timegm(parse_datetime(details["endAt"]).timetuple())
                 if entry["ends_at"] is None or ends_at > entry["ends_at"]:
@@ -913,6 +923,7 @@ class Twitch(object):
                 pass
         if games:
             self.drops_db.record_games(list(games.values()))
+        return len(games)
 
     def claim_drop_once(self, drop, campaign_id, game, is_account_connected, end_at):
         """Claim a drop at most one time, ever. Returns True when the drop is claimed.
@@ -953,9 +964,12 @@ class Twitch(object):
         )
 
     def claim_all_drops_from_inventory(self):
+        """Claims what can be claimed. Returns the campaigns in progress (for the games list)."""
+        in_progress = []
         inventory = self.__get_inventory()
         if inventory not in [None, {}]:
             if inventory["dropCampaignsInProgress"] not in [None, {}]:
+                in_progress = inventory["dropCampaignsInProgress"]
                 for campaign in inventory["dropCampaignsInProgress"]:
                     game = (campaign.get("game") or {}).get("displayName") or campaign.get("name")
                     connected = (campaign.get("self") or {}).get("isAccountConnected")
@@ -971,6 +985,7 @@ class Twitch(object):
                             )
                             if connected is not False:
                                 time.sleep(random.uniform(5, 10))
+        return in_progress
 
     def sync_campaigns(self, streamers, chunk_size=3):
         campaigns_update = 0
@@ -989,15 +1004,22 @@ class Twitch(object):
                     campaigns_update = time.time()
 
                     # TEMPORARY AUTO DROP CLAIMING FIX
-                    self.claim_all_drops_from_inventory()
+                    in_progress = self.claim_all_drops_from_inventory()
                     #####################################
 
                     # Get full details from current ACTIVE campaigns
                     # Use dashboard so we can explore new drops not currently active in our Inventory
-                    campaigns_details = self.__get_campaigns_details(
-                        self.__get_drops_dashboard(status="ACTIVE")
+                    dashboard = self.__get_drops_dashboard(status="ACTIVE")
+                    campaigns_details = self.__get_campaigns_details(dashboard)
+                    # Games come from three places so one failing request can't leave the list empty
+                    games_recorded = self.__record_games(
+                        in_progress + dashboard + campaigns_details
                     )
-                    self.__record_games(campaigns_details)
+                    logger.info(
+                        f"Drops sync: {len(dashboard)} active campaigns on the drops dashboard, "
+                        f"{len(campaigns_details)} with details, {len(in_progress)} in your inventory, "
+                        f"{games_recorded} games recorded"
+                    )
                     campaigns = []
 
                     # Going to clear array and structure. Remove all the timeBasedDrops expired or not started yet
@@ -1040,6 +1062,13 @@ class Twitch(object):
                 logger.error(f"Error while syncing inventory: {e}")
                 campaigns = []
                 self.__check_connection_handler(chunk_size)
+            except Exception as e:
+                # Never let an unexpected error end the sync thread: it would silently stop
+                # all drop claiming and the games list until the next restart
+                logger.error(
+                    f"Unexpected error while syncing drops, will retry: {e!r}", exc_info=True
+                )
+                campaigns = []
 
             self.__chuncked_sleep(60, chunk_size=chunk_size)
 

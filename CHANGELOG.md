@@ -2,6 +2,12 @@
 
 All notable changes to TwitchMiner. The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow [Semantic Versioning](https://semver.org/). TwitchMiner is a fork of [Twitch Channel Points Miner v2](https://github.com/rdavydov/Twitch-Channel-Points-Miner-v2); see [Credits and license](README.md#credits-and-license).
 
+## [Unreleased]
+
+### Fixed
+- The drops sync could end silently: when Twitch answered the drops dashboard request with an error (`data: null`), the sync thread crashed, which stopped drop claiming and left **Games with drops** empty until the next restart. The response is now read safely, the error is logged, and any unexpected error in the sync is logged and retried instead of ending the thread.
+- Games are now recorded from your inventory, the drops dashboard and the campaign details, so one failing request can't leave the list empty. Each sync logs how many campaigns and games it found.
+
 ## [1.1.0] - 2026-10-18
 
 ### Added
