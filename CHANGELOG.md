@@ -10,7 +10,6 @@ All notable changes to TwitchMiner. The format follows [Keep a Changelog](https:
 
 ### Fixed
 - Campaigns that already ended but were still in your inventory no longer show their game as "Offered now" on the analytics page.
-
 - The drops sync could end silently: when Twitch answered the drops dashboard request with an error (`data: null`), the sync thread crashed, which stopped drop claiming and left **Games with drops** empty until the next restart. The response is now read safely, the error is logged, and any unexpected error in the sync is logged and retried instead of ending the thread.
 - Games are now recorded from your inventory, the drops dashboard and the campaign details, so one failing request can't leave the list empty. Each sync logs how many campaigns and games it found.
 
