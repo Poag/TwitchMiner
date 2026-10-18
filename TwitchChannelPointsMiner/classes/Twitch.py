@@ -6,6 +6,7 @@
 
 import calendar
 import copy
+import re
 import logging
 import os
 import random
@@ -891,6 +892,73 @@ class Twitch(object):
 
         return sorted(indexes, key=lambda i: 0 if is_priority(i) else 1)
 
+    @staticmethod
+    def game_slug(name):
+        """The URL name of a game, as used by the Twitch directory (same rule as TwitchDropsMiner)."""
+        slug = re.sub(r"'", "", name.lower())
+        slug = re.sub(r"\W+", "-", slug)
+        return re.sub(r"-{2,}", "-", slug.strip("-"))
+
+    @staticmethod
+    def __stream_is_game(stream, game):
+        stream_game = stream.game or {}
+        return str(stream_game.get("id", "")) == str(game["id"]) or (
+            (stream_game.get("displayName") or stream_game.get("name") or "").lower()
+            == game["name"].lower()
+        )
+
+    def games_needing_streamers(self, streamers):
+        """Prioritised games with drops on offer right now that none of our (online) streamers
+        is playing, so there is nobody to watch for them."""
+        keys = self.__priority_game_keys()
+        if not keys:
+            return []
+        now_ms = time.time() * 1000
+        needed = []
+        for game in self.drops_db.games():
+            if not game["active"] or (game["ends_at"] and game["ends_at"] < now_ms):
+                continue
+            if game["id"].lower() not in keys and game["name"].lower() not in keys:
+                continue
+            covered = any(
+                s.is_online is True
+                and s.drops_condition() is True
+                and self.__stream_is_game(s.stream, game)
+                for s in streamers
+            )
+            if not covered:
+                needed.append(game)
+        return needed
+
+    def find_drop_streamers(self, game, limit=30):
+        """Live channels playing `game` with drops enabled, best first:
+        [{"id", "login", "display_name", "viewers"}]. Empty on any failure."""
+        json_data = copy.deepcopy(GQLOperations.GameDirectory)
+        json_data["variables"]["slug"] = game.get("slug") or self.game_slug(game["name"])
+        json_data["variables"]["limit"] = limit
+        response = self.post_gql_request(json_data)
+        try:
+            edges = response["data"]["game"]["streams"]["edges"]
+        except (KeyError, TypeError):
+            logger.warning(
+                f"Could not search live streams for {game['name']}: {str(response)[:300]}"
+            )
+            return []
+        found = []
+        for edge in edges:
+            node = edge.get("node") or {}
+            broadcaster = node.get("broadcaster")
+            if broadcaster:
+                found.append(
+                    {
+                        "id": broadcaster["id"],
+                        "login": broadcaster["login"],
+                        "display_name": broadcaster.get("displayName") or broadcaster["login"],
+                        "viewers": node.get("viewersCount", 0),
+                    }
+                )
+        return found
+
     def __record_games(self, campaign_dicts):
         """Store the games that currently offer drops so they can be picked on the analytics page.
 
@@ -907,20 +975,30 @@ class Twitch(object):
             name = game.get("displayName") or game.get("name")
             if not game_id or not name:
                 continue
+            ends_at = None
+            try:
+                ends_at = calendar.timegm(parse_datetime(details["endAt"]).timetuple())
+            except (KeyError, ValueError, TypeError):
+                pass
+            if ends_at is not None and ends_at < time.time():
+                continue  # an ended campaign (still listed by the inventory) is not on offer
             entry = games.setdefault(
-                game_id, {"id": game_id, "name": name, "campaigns": 0, "ends_at": None}
+                game_id,
+                {
+                    "id": game_id,
+                    "name": name,
+                    "slug": game.get("slug") or self.game_slug(name),
+                    "campaigns": 0,
+                    "ends_at": None,
+                },
             )
             campaign_id = details.get("id")
             if campaign_id is None or campaign_id not in seen_campaigns:
                 entry["campaigns"] += 1
                 if campaign_id is not None:
                     seen_campaigns.add(campaign_id)
-            try:
-                ends_at = calendar.timegm(parse_datetime(details["endAt"]).timetuple())
-                if entry["ends_at"] is None or ends_at > entry["ends_at"]:
-                    entry["ends_at"] = ends_at
-            except (KeyError, ValueError, TypeError):
-                pass
+            if ends_at is not None and (entry["ends_at"] is None or ends_at > entry["ends_at"]):
+                entry["ends_at"] = ends_at
         if games:
             self.drops_db.record_games(list(games.values()))
         return len(games)

@@ -61,6 +61,7 @@ class StreamerSettings(object):
 class Streamer(object):
     __slots__ = [
         "username",
+        "hunted",
         "channel_id",
         "settings",
         "is_online",
@@ -95,6 +96,8 @@ class Streamer(object):
         self.viewer_is_mod = False
         self.activeMultipliers = None
         self.irc_chat = None
+        # True for channels found by the drops hunt rather than listed or followed
+        self.hunted = False
 
         self.stream = Stream()
 
