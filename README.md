@@ -45,12 +45,15 @@ As the GPL requires, any copy or modification you distribute must stay under the
 If you want to help, please leave a star 🌟 and read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## What's different in this fork
-**Added in this fork**
-- Configuration through `TCPM_*` environment variables (no `run.py` to edit), with an [`.env.example`](.env.example)
+**Added in this fork** (see the [CHANGELOG](CHANGELOG.md))
+- Configuration through `TCPM_*` environment variables (no `run.py` to edit), with an [`.env.example`](.env.example) and an example [`compose.yaml`](compose.yaml)
 - A single data folder (`TCPM_DATA_DIR`) holding cookies, the drops database, logs and analytics, so Docker needs one volume
 - Each drop is claimed **once only**: attempts are stored in a small per-account database, so a failing claim is never retried and re-notified
 - Drops for a game whose account is **not connected** are skipped, with a warning once a day that includes a countdown to the end of the campaign
+- **Prioritise games for drops**: every game the drops menu offers is remembered, and you pick the ones to watch first on the analytics page or with `TCPM_PRIORITY_GAMES`
+- A redesigned analytics page: light and dark themes, a **Drops** table, a **live Log** panel, and a green border on the streamers being watched right now
 - Multi-arch (`amd64` and `arm64`) images on GHCR, built on native runners, with `latest` on `main`, version tags and a monthly rebuild for security updates
+- An Unraid Community Applications template (beta) in the [docker-xml](https://github.com/Poag/docker-xml) repository
 - Lower idle CPU and memory use (no busy IRC loop, in-memory analytics writes, lazy pandas import, no needless drops polling)
 - Smaller image on a current base (Python 3.12 slim, no compilers needed)
 
