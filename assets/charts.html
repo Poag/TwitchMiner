@@ -88,6 +88,21 @@
             </div>
         </section>
 
+        <section class="card games-card">
+            <h2>Games with drops <span id="games-count" class="count"></span></h2>
+            <p class="hint">Tick the games you want to watch first. The miner then picks streamers playing them before others when it chooses who to watch for drops (needs <code>DROPS</code> in <code>TCPM_PRIORITY</code>, and a listed or followed streamer playing the game).</p>
+            <div class="table-wrap">
+                <table id="games-table">
+                    <thead>
+                        <tr><th>Prioritise</th><th>Game</th><th>Campaigns</th><th>Ends</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="games-body">
+                        <tr><td colspan="5" class="empty">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
         <section class="card drops-card">
             <h2>Drops <span id="drops-count" class="count"></span></h2>
             <div class="table-wrap">

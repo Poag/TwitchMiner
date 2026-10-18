@@ -190,6 +190,8 @@ $(document).ready(function () {
     setInterval(loadDrops, 60000);
     loadWatching();
     setInterval(loadWatching, 15000);
+    loadGames();
+    setInterval(loadGames, 60000);
 
     updateAnnotations();
     toggleDarkMode();
@@ -238,6 +240,50 @@ function loadWatching() {
     $.getJSON('./watching', function (response) {
         watching = response;
         applyWatching();
+    });
+}
+
+function formatEnds(ms) {
+    if (!ms) return '';
+    var left = ms - Date.now();
+    if (left <= 0) return 'ended';
+    var days = Math.floor(left / 86400000), hours = Math.floor((left % 86400000) / 3600000);
+    return (days ? days + 'd ' : '') + hours + 'h left';
+}
+
+function loadGames() {
+    $.getJSON('./games', function (games) {
+        var body = $('#games-body').empty();
+        var picked = games.filter(function (g) { return g.prioritised; }).length;
+        $('#games-count').text(games.length ? '(' + picked + ' prioritised of ' + games.length + ')' : '');
+        if (!games.length) {
+            body.append($('<tr>').append($('<td colspan="5" class="empty">').text('No games yet. They appear here after the first drops sync, about a minute after the miner starts.')));
+            return;
+        }
+        games.forEach(function (g) {
+            var box = $('<input type="checkbox">').prop('checked', g.prioritised).attr('aria-label', 'Prioritise ' + g.name)
+                .on('change', function () { setGamePriority(g.id, this.checked, $(this)); });
+            var status = $('<span class="badge">').addClass(g.active ? 'ok' : 'idle').text(g.active ? 'Offered now' : 'Not offered');
+            body.append($('<tr>').toggleClass('is-prioritised', g.prioritised)
+                .append($('<td>').append(box))
+                .append($('<td>').text(g.name))
+                .append($('<td class="muted">').text(g.campaigns || ''))
+                .append($('<td class="muted">').text(g.active ? formatEnds(g.ends_at) : ''))
+                .append($('<td>').append(status)));
+        });
+    }).fail(function () {
+        $('#games-body').empty().append($('<tr>').append($('<td colspan="5" class="empty">').text('Could not load games.')));
+    });
+}
+
+function setGamePriority(id, prioritised, box) {
+    $.ajax({
+        url: './games/' + encodeURIComponent(id) + '/priority',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ prioritised: prioritised })
+    }).done(loadGames).fail(function () {
+        box.prop('checked', !prioritised);  // the change was not saved
     });
 }
 

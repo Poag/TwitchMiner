@@ -198,6 +198,7 @@ All settings are environment variables. Booleans accept `true/false`, `1/0`, `ye
 | `TCPM_BLACKLIST` | _empty_ | Streamers to skip (useful with `TCPM_FOLLOWERS`) |
 | `TCPM_FOLLOWERS` | `false` | Also mine every channel **you follow** on Twitch. They are added after `TCPM_STREAMERS` (so those keep priority) and the log shows `Load N followers from your profile!` |
 | `TCPM_FOLLOWERS_ORDER` | `ASC` | Order of the followed channels by follow date: `ASC` or `DESC` |
+| `TCPM_PRIORITY_GAMES` | _empty_ | Comma separated names of games to watch first for drops (case-insensitive, e.g. `Elim,Rust`). Games can also be ticked on the analytics page; both lists are combined |
 | `TCPM_CLAIM_DROPS_STARTUP` | `false` | Claim all drops from the Twitch inventory on startup |
 | `TCPM_PRIORITY` | `STREAK,DROPS,ORDER` | Priority list, see below |
 | `TCPM_ENABLE_ANALYTICS` | `false` | Enable analytics. Disabling it significantly reduces memory use and disk writes |
@@ -282,7 +283,7 @@ If you want you can toggle the dark theme with the dedicated checkbox.
 | ----------- | ---------- |
 | ![Light theme](assets/chart-analytics-light.png) | ![Dark theme](assets/chart-analytics-dark.png) |
 
-In the streamer list, the (up to two) streamers the miner is watching right now have a green border; the one you clicked is filled. Below the chart, a **Drops** table lists every drop the miner tried to claim (time, drop, game, claimed or failed), and the optional **Log** panel shows the current session's log live (at the console log level, from memory, so it works even with `TCPM_LOG_SAVE=false`). To use this feature set `TCPM_ENABLE_ANALYTICS=true`. Read more at: [#96](https://github.com/Tkd-Alex/Twitch-Channel-Points-Miner-v2/issues/96)
+In the streamer list, the (up to two) streamers the miner is watching right now have a green border; the one you clicked is filled. A **Games with drops** table lists every game the Twitch drops menu has offered since the miner first ran (kept in the database, marked *Offered now* while a campaign is active). Tick a game to **prioritise** it: when the miner chooses which streamers to watch for drops it picks streamers playing prioritised games first, then the rest. This needs `DROPS` in `TCPM_PRIORITY` and a listed or followed streamer playing the game. Below the chart, a **Drops** table lists every drop the miner tried to claim (time, drop, game, claimed or failed), and the optional **Log** panel shows the current session's log live (at the console log level, from memory, so it works even with `TCPM_LOG_SAVE=false`). To use this feature set `TCPM_ENABLE_ANALYTICS=true`. Read more at: [#96](https://github.com/Tkd-Alex/Twitch-Channel-Points-Miner-v2/issues/96)
 
 | Variable | Default | Description |
 |---|---|---|

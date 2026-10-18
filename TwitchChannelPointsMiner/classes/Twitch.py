@@ -4,6 +4,7 @@
 # Full list of available methods: https://azr.ivr.fi/schema/query.doc.html (a bit outdated)
 
 
+import calendar
 import copy
 import logging
 import os
@@ -59,6 +60,7 @@ class Twitch(object):
     __slots__ = [
         "cookies_file",
         "drops_db",
+        "priority_games_cache",
         "user_agent",
         "twitch_login",
         "running",
@@ -75,6 +77,7 @@ class Twitch(object):
         self.drops_db = DropsDB(
             os.path.join(subdir("database"), f"{username}_drops.db")
         )
+        self.priority_games_cache = (0, set())
         self.user_agent = user_agent
         self.device_id = "".join(
             choice(string.ascii_letters + string.digits) for _ in range(32)
@@ -463,7 +466,8 @@ class Twitch(object):
                                     break
 
                     elif prior == Priority.DROPS:
-                        for index in streamers_index:
+                        # Prioritised games (analytics page / TCPM_PRIORITY_GAMES) come first
+                        for index in self.prioritise_games(streamers, streamers_index):
                             if streamers[index].drops_condition() is True:
                                 streamers_watching.add(index)
                                 if remaining_watch_amount() <= 0:
@@ -856,6 +860,60 @@ class Twitch(object):
         except (ValueError, KeyError):
             return False
 
+    # === PRIORITISED GAMES === #
+    def __priority_game_keys(self):
+        """Lower-case ids and names of the games to watch first: the ones ticked on the
+        analytics page plus TCPM_PRIORITY_GAMES. Re-read from the database every 30 seconds."""
+        fetched_at, keys = self.priority_games_cache
+        if time.time() - fetched_at > 30:
+            keys = set(getattr(Settings, "priority_games", []) or [])
+            try:
+                for game_id, name in self.drops_db.prioritised_games():
+                    keys.add(str(game_id).lower())
+                    keys.add(name.lower())
+            except Exception as e:
+                logger.debug(f"Could not read the prioritised games: {e}")
+            self.priority_games_cache = (time.time(), keys)
+        return keys
+
+    def prioritise_games(self, streamers, indexes):
+        """Streamers playing a prioritised game first; everyone else keeps their order."""
+        keys = self.__priority_game_keys()
+        if not keys:
+            return list(indexes)
+
+        def is_priority(index):
+            game = streamers[index].stream.game or {}
+            return any(
+                str(game.get(k, "")).lower() in keys for k in ("id", "name", "displayName")
+            )
+
+        return sorted(indexes, key=lambda i: 0 if is_priority(i) else 1)
+
+    def __record_games(self, campaigns_details):
+        """Store the games that currently offer drops so they can be picked on the analytics page."""
+        games = {}
+        for details in campaigns_details:
+            if not details:
+                continue
+            game = details.get("game") or {}
+            game_id = game.get("id")
+            name = game.get("displayName") or game.get("name")
+            if not game_id or not name:
+                continue
+            entry = games.setdefault(
+                game_id, {"id": game_id, "name": name, "campaigns": 0, "ends_at": None}
+            )
+            entry["campaigns"] += 1
+            try:
+                ends_at = calendar.timegm(parse_datetime(details["endAt"]).timetuple())
+                if entry["ends_at"] is None or ends_at > entry["ends_at"]:
+                    entry["ends_at"] = ends_at
+            except (KeyError, ValueError, TypeError):
+                pass
+        if games:
+            self.drops_db.record_games(list(games.values()))
+
     def claim_drop_once(self, drop, campaign_id, game, is_account_connected, end_at):
         """Claim a drop at most one time, ever. Returns True when the drop is claimed.
 
@@ -939,6 +997,7 @@ class Twitch(object):
                     campaigns_details = self.__get_campaigns_details(
                         self.__get_drops_dashboard(status="ACTIVE")
                     )
+                    self.__record_games(campaigns_details)
                     campaigns = []
 
                     # Going to clear array and structure. Remove all the timeBasedDrops expired or not started yet

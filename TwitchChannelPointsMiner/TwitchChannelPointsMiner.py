@@ -81,6 +81,8 @@ class TwitchChannelPointsMiner:
         disable_at_in_nickname: bool = False,
         # Settings for logging and selenium as you can see.
         priority: list = [Priority.STREAK, Priority.DROPS, Priority.ORDER],
+        # Names of games whose drops are watched first (more can be ticked on the analytics page)
+        priority_games: list = [],
         # This settings will be global shared trought Settings class
         logger_settings: LoggerSettings = LoggerSettings(),
         # Default values for all streamers
@@ -96,6 +98,7 @@ class TwitchChannelPointsMiner:
         Settings.disable_ssl_cert_verification = disable_ssl_cert_verification
 
         Settings.disable_at_in_nickname = disable_at_in_nickname
+        Settings.priority_games = [g.strip().lower() for g in priority_games if g.strip()]
 
         import socket
 
