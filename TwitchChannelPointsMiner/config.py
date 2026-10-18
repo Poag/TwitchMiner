@@ -251,6 +251,7 @@ def from_env(environ=None):
         password=env.get("PASSWORD"),
         claim_drops_startup=env.bool("CLAIM_DROPS_STARTUP", False),
         priority=priority,
+        priority_games=env.list("PRIORITY_GAMES"),
         enable_analytics=enable_analytics,
         disable_ssl_cert_verification=env.bool("DISABLE_SSL_CERT_VERIFICATION", False),
         disable_at_in_nickname=env.bool("DISABLE_AT_IN_NICKNAME", False),

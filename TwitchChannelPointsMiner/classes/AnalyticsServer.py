@@ -299,6 +299,27 @@ class AnalyticsServer(Thread):
 
         self.app.add_url_rule("/drops", "drops", drops_log, methods=["GET"])
 
+        def games_list():
+            return Response(
+                json.dumps(DropsDB(drops_db_path).games()),
+                status=200,
+                mimetype="application/json",
+            )
+
+        def games_priority(game_id):
+            # JSON only: a cross-site form post can't send this content type without a preflight
+            body = request.get_json(silent=True)
+            if not isinstance(body, dict) or "prioritised" not in body:
+                return Response("Expected JSON: {\"prioritised\": true|false}", status=400)
+            if not DropsDB(drops_db_path).set_prioritised(game_id, body["prioritised"] is True):
+                return Response("Unknown game", status=404)
+            return Response(json.dumps({"ok": True}), status=200, mimetype="application/json")
+
+        self.app.add_url_rule("/games", "games", games_list, methods=["GET"])
+        self.app.add_url_rule(
+            "/games/<string:game_id>/priority", "games_priority", games_priority, methods=["POST"]
+        )
+
         def watching():
             # Streamers the miner is sending minute-watched events for right now (max 2)
             return Response(
