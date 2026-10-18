@@ -132,6 +132,34 @@ class GQLOperations:
             }
         },
     }
+    # Live streams of a game. With systemFilters DROPS_ENABLED only channels with drops on.
+    # Operation shape and hash as used by DevilXD/TwitchDropsMiner; the hash rotates now and then.
+    GameDirectory = {
+        "operationName": "DirectoryPage_Game",
+        "variables": {
+            "limit": 30,
+            "slug": None,
+            "imageWidth": 50,
+            "includeCostreaming": False,
+            "options": {
+                "broadcasterLanguages": [],
+                "freeformTags": None,
+                "includeRestricted": ["SUB_ONLY_LIVE"],
+                "recommendationsContext": {"platform": "web"},
+                "sort": "RELEVANCE",
+                "systemFilters": ["DROPS_ENABLED"],
+                "tags": [],
+                "requestID": "JIRA-VXP-2397",
+            },
+            "sortTypeIsRecency": False,
+        },
+        "extensions": {
+            "persistedQuery": {
+                "version": 1,
+                "sha256Hash": "86bcceb4e8b1a51256ff8eed8bd8aae4acacf80d737efe904f84f3aeadf8cafd",
+            }
+        },
+    }
     ViewerDropsDashboard = {
         "operationName": "ViewerDropsDashboard",
         # "variables": {},

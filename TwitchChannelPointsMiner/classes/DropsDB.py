@@ -25,6 +25,9 @@ class DropsDB(object):
                 "ends_at REAL, active INTEGER NOT NULL DEFAULT 0, "
                 "prioritised INTEGER NOT NULL DEFAULT 0)"
             )
+            game_columns = [row[1] for row in db.execute("PRAGMA table_info(games)")]
+            if "slug" not in game_columns:
+                db.execute("ALTER TABLE games ADD COLUMN slug TEXT")
             # Older databases have no benefit column
             columns = [row[1] for row in db.execute("PRAGMA table_info(drops)")]
             if "benefit" not in columns:
@@ -92,19 +95,20 @@ class DropsDB(object):
             db.execute("UPDATE games SET active = 0")
             for g in games:
                 db.execute(
-                    "INSERT INTO games (game_id, name, first_seen, last_seen, campaigns, ends_at, active) "
-                    "VALUES (?, ?, ?, ?, ?, ?, 1) "
+                    "INSERT INTO games (game_id, name, first_seen, last_seen, campaigns, ends_at, active, slug) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 1, ?) "
                     "ON CONFLICT(game_id) DO UPDATE SET name = excluded.name, "
                     "last_seen = excluded.last_seen, campaigns = excluded.campaigns, "
-                    "ends_at = excluded.ends_at, active = 1",
-                    (str(g["id"]), g["name"], now, now, g.get("campaigns", 0), g.get("ends_at")),
+                    "ends_at = excluded.ends_at, active = 1, "
+                    "slug = COALESCE(excluded.slug, games.slug)",
+                    (str(g["id"]), g["name"], now, now, g.get("campaigns", 0), g.get("ends_at"), g.get("slug")),
                 )
 
     def games(self):
         """Prioritised first, then games offered right now, then by name."""
         with closing(self.__connect()) as db:
             rows = db.execute(
-                "SELECT game_id, name, campaigns, ends_at, active, prioritised, last_seen "
+                "SELECT game_id, name, campaigns, ends_at, active, prioritised, last_seen, slug "
                 "FROM games ORDER BY prioritised DESC, active DESC, name COLLATE NOCASE"
             ).fetchall()
         return [
@@ -116,8 +120,9 @@ class DropsDB(object):
                 "active": bool(active),
                 "prioritised": bool(prioritised),
                 "last_seen": int(last_seen * 1000),
+                "slug": slug,
             }
-            for game_id, name, campaigns, ends_at, active, prioritised, last_seen in rows
+            for game_id, name, campaigns, ends_at, active, prioritised, last_seen, slug in rows
         ]
 
     def set_prioritised(self, game_id, prioritised):

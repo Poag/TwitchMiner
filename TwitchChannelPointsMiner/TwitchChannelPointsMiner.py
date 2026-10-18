@@ -69,6 +69,8 @@ class TwitchChannelPointsMiner:
         "original_streamers",
         "logs_file",
         "queue_listener",
+        "hunt_streamers",
+        "hunt_max",
     ]
 
     def __init__(
@@ -83,6 +85,10 @@ class TwitchChannelPointsMiner:
         priority: list = [Priority.STREAK, Priority.DROPS, Priority.ORDER],
         # Names of games whose drops are watched first (more can be ticked on the analytics page)
         priority_games: list = [],
+        # Look for streamers outside your list when a prioritised game has drops and nobody you
+        # watch is playing it (at most hunt_max such streamers at a time)
+        hunt_streamers: bool = False,
+        hunt_max: int = 2,
         # This settings will be global shared trought Settings class
         logger_settings: LoggerSettings = LoggerSettings(),
         # Default values for all streamers
@@ -98,6 +104,8 @@ class TwitchChannelPointsMiner:
         Settings.disable_ssl_cert_verification = disable_ssl_cert_verification
 
         Settings.disable_at_in_nickname = disable_at_in_nickname
+        self.hunt_streamers = hunt_streamers
+        self.hunt_max = max(1, int(hunt_max))
         Settings.priority_games = [g.strip().lower() for g in priority_games if g.strip()]
 
         import socket
@@ -373,6 +381,13 @@ class TwitchChannelPointsMiner:
                         PubsubTopic("community-points-channel-v1", streamer=streamer)
                     )
 
+            if self.hunt_streamers is True:
+                hunt_thread = threading.Thread(
+                    target=self.__hunt_streamers, args=(blacklist,), daemon=True
+                )
+                hunt_thread.name = "Hunt streamers"
+                hunt_thread.start()
+
             refresh_context = time.time()
             while self.running:
                 time.sleep(random.uniform(20, 60))
@@ -396,6 +411,74 @@ class TwitchChannelPointsMiner:
                             self.twitch.load_channel_points_context(
                                 self.streamers[index]
                             )
+
+    def __hunt_streamers(self, blacklist, first_delay=120, interval=300):
+        """Every few minutes: for each prioritised game with drops that nobody we watch is
+        playing, find a live channel with drops on and add it. A hunted channel takes over the
+        slot of an earlier hunted one that went offline, so the list never grows past hunt_max."""
+        self.__sleep_while_running(first_delay)
+        while self.running:
+            try:
+                for game in self.twitch.games_needing_streamers(self.streamers):
+                    hunted = [i for i, s in enumerate(self.streamers) if s.hunted]
+                    slot = next(
+                        (i for i in hunted if self.streamers[i].is_online is False), None
+                    )
+                    if slot is None and len(hunted) >= self.hunt_max:
+                        break  # all hunt slots are busy with live channels
+                    known = {s.username for s in self.streamers}
+                    for channel in self.twitch.find_drop_streamers(game):
+                        login = channel["login"].lower()
+                        if login in known or login in blacklist:
+                            continue
+                        streamer = self.__make_hunted_streamer(channel)
+                        if streamer is None:
+                            continue
+                        if slot is None:
+                            self.streamers.append(streamer)
+                        else:
+                            self.streamers[slot] = streamer
+                        self.ws_pool.submit(
+                            PubsubTopic("video-playback-by-id", streamer=streamer)
+                        )
+                        logger.info(
+                            f"Drops hunt: nobody on your list is playing {game['name']}, so now "
+                            f"watching {channel['display_name']} ({channel['viewers']} viewers)",
+                            extra={"emoji": ":telescope:"},
+                        )
+                        break
+            except Exception as e:
+                logger.error(f"Drops hunt failed, will retry: {e!r}", exc_info=True)
+            self.__sleep_while_running(interval)
+
+    def __make_hunted_streamer(self, channel):
+        """A Streamer for a channel found by the hunt, or None if it is not live after all."""
+        try:
+            streamer = Streamer(
+                channel["login"],
+                settings=StreamerSettings(
+                    follow_raid=False,
+                    claim_drops=True,
+                    claim_moments=False,
+                    watch_streak=False,
+                    community_goals=False,
+                    chat=ChatPresence.NEVER,
+                ),
+            )
+            streamer.channel_id = channel["id"]
+            streamer.hunted = True
+            time.sleep(random.uniform(0.3, 0.7))
+            self.twitch.load_channel_points_context(streamer)
+            self.twitch.check_streamer_online(streamer)
+        except Exception as e:
+            logger.debug(f"Could not set up the hunted channel {channel['login']}: {e!r}")
+            return None
+        return streamer if streamer.is_online is True else None
+
+    def __sleep_while_running(self, seconds):
+        end = time.time() + seconds
+        while self.running and time.time() < end:
+            time.sleep(min(5, max(0, end - time.time())))
 
     def end(self, signum, frame):
         if not self.running:
