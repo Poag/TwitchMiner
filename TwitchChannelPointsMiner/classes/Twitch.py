@@ -834,33 +834,36 @@ class Twitch(object):
                         break
         return campaigns
 
-    def claim_drop(self, drop):
-        logger.info(
-            f"Claim {drop}", extra={"emoji": ":package:", "event": Events.DROP_CLAIM}
-        )
-
+    def claim_drop(self, drop, game=None):
         json_data = copy.deepcopy(GQLOperations.DropsPage_ClaimDropRewards)
         json_data["variables"] = {
             "input": {"dropInstanceID": drop.drop_instance_id}}
         response = self.post_gql_request(json_data)
+        claimed = False
         try:
             # response["data"]["claimDropRewards"] can be null and respose["data"]["errors"] != []
             # or response["data"]["claimDropRewards"]["status"] === DROP_INSTANCE_ALREADY_CLAIMED
-            if ("claimDropRewards" in response["data"]) and (
-                response["data"]["claimDropRewards"] is None
-            ):
-                return False
-            elif ("errors" in response["data"]) and (response["data"]["errors"] != []):
-                return False
-            elif ("claimDropRewards" in response["data"]) and (
-                response["data"]["claimDropRewards"]["status"]
-                in ["ELIGIBLE_FOR_ALL", "DROP_INSTANCE_ALREADY_CLAIMED"]
-            ):
-                return True
-            else:
-                return False
-        except (ValueError, KeyError):
-            return False
+            rewards = response["data"].get("claimDropRewards")
+            if rewards is not None and not response["data"].get("errors"):
+                claimed = rewards["status"] in [
+                    "ELIGIBLE_FOR_ALL",
+                    "DROP_INSTANCE_ALREADY_CLAIMED",
+                ]
+        except (ValueError, KeyError, AttributeError, TypeError):
+            claimed = False
+        item = drop.benefit or drop.name
+        where = f" ({game})" if game else ""
+        if claimed:
+            logger.info(
+                f"Drop collected: {item}{where}",
+                extra={"emoji": ":package:", "event": Events.DROP_CLAIM},
+            )
+        else:
+            logger.warning(
+                f"Could not collect drop: {item}{where}",
+                extra={"emoji": ":package:", "event": Events.DROP_CLAIM},
+            )
+        return claimed
 
     # === PRIORITISED GAMES === #
     def __priority_game_keys(self):
@@ -1014,27 +1017,29 @@ class Twitch(object):
         if self.drops_db.was_attempted(drop.id):
             return self.drops_db.was_claimed(drop.id)
         if is_account_connected is False:
-            self.__warn_account_not_connected(game, end_at)
+            self.__warn_account_not_connected(campaign_id, game, end_at)
             return False
-        claimed = self.claim_drop(drop)
+        claimed = self.claim_drop(drop, game)
         # A failed claim is also stored: we don't try the same drop again
         self.drops_db.record_attempt(
             drop.id, drop.name, game, claimed, benefit=drop.benefit
         )
         return claimed
 
-    def __warn_account_not_connected(self, game, end_at):
-        if not self.drops_db.should_notify_game(game):
-            return
-        remaining = ""
+    def __warn_account_not_connected(self, campaign_id, game, end_at):
+        """Warn once per campaign; campaigns that have already ended are not worth a message."""
+        seconds = None
         if end_at is not None:
             seconds = int((end_at - datetime.utcnow()).total_seconds())
-            if seconds > 0:
-                days, rest = divmod(seconds, 86400)
-                hours, rest = divmod(rest, 3600)
-                remaining = f" - campaign ends in {days}d {hours}h {rest // 60}m"
-            else:
-                remaining = " - campaign has ended"
+            if seconds <= 0:
+                return
+        if not self.drops_db.should_notify_campaign(campaign_id):
+            return
+        remaining = ""
+        if seconds is not None:
+            days, rest = divmod(seconds, 86400)
+            hours, rest = divmod(rest, 3600)
+            remaining = f" - campaign ends in {days}d {hours}h {rest // 60}m"
         logger.warning(
             f"Drops available for {game} but your account is not connected to the game, "
             f"not claiming{remaining}. Connect it at https://www.twitch.tv/drops/inventory",

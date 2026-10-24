@@ -2,13 +2,10 @@ import sqlite3
 import time
 from contextlib import closing
 
-# A game's "account not linked" warning is repeated at most once per this many seconds
-NOTICE_INTERVAL = 24 * 60 * 60
-
 
 class DropsDB(object):
     """Remembers which drops we already tried to claim, so each is attempted only once,
-    and when we last warned about a game whose account is not connected."""
+    and which campaigns we already warned about (account not connected)."""
 
     def __init__(self, path):
         self.path = path
@@ -141,16 +138,15 @@ class DropsDB(object):
                 "SELECT game_id, name FROM games WHERE prioritised = 1"
             ).fetchall()
 
-    def should_notify_game(self, game):
-        """True (and the notice is recorded) when this game was not warned about in the last day."""
-        now = time.time()
+    def should_notify_campaign(self, campaign_id):
+        """True only the first time a campaign is seen; the notice is recorded."""
+        key = f"campaign:{campaign_id}"
         with closing(self.__connect()) as db, db:
-            row = db.execute(
-                "SELECT notified_at FROM game_notices WHERE game = ?", (game,)
-            ).fetchone()
-            if row is not None and now - row[0] < NOTICE_INTERVAL:
+            if db.execute(
+                "SELECT 1 FROM game_notices WHERE game = ?", (key,)
+            ).fetchone():
                 return False
             db.execute(
-                "INSERT OR REPLACE INTO game_notices VALUES (?, ?)", (game, now)
+                "INSERT INTO game_notices VALUES (?, ?)", (key, time.time())
             )
             return True

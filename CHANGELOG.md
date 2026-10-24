@@ -4,6 +4,10 @@ All notable changes to TwitchMiner. The format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+### Changed
+- The "account not connected" warning is sent once per campaign (not daily), and never for campaigns that have already ended.
+- Claimed drops are reported as `Drop collected: <item> (<game>)` instead of dumping the raw drop object; failures read `Could not collect drop: …`.
+
 ### Added
 - **Drops hunt** (`TCPM_HUNT_STREAMERS`, off by default). When a prioritised game has drops on offer and none of your streamers is playing it, the miner searches that game's Twitch directory for a live channel with drops enabled and watches it too, up to `TCPM_HUNT_MAX_STREAMERS` (default 2) at a time. Hunted channels are temporary extras: no chat, raids or streaks, and a hunted channel that goes offline is replaced by the next one found.
 - Games remember their Twitch URL name (slug), used by the hunt.
