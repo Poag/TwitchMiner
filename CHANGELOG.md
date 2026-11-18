@@ -5,6 +5,7 @@ All notable changes to TwitchMiner. The format follows [Keep a Changelog](https:
 ## [Unreleased]
 
 ### Changed
+- Far fewer DNS lookups: Twitch requests now share one pooled HTTP session, and DNS answers are cached for 5 minutes.
 - New icon in the red/gold/black style shared by Poag's other self-hosted apps (README and analytics page).
 - The "account not connected" warning is sent once per campaign (not daily), and never for campaigns that have already ended.
 - Claimed drops are reported as `Drop collected: <item> (<game>)` instead of dumping the raw drop object; failures read `Could not collect drop: …`.

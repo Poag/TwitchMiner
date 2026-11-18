@@ -14,7 +14,8 @@ import re
 import string
 import time
 from datetime import datetime
-import requests
+import requests  # noqa: F401
+from TwitchChannelPointsMiner.net import http
 import validators
 # import json
 
@@ -149,14 +150,14 @@ class Twitch(object):
 
             headers = {"User-Agent": USER_AGENTS["Linux"]["FIREFOX"]}
 
-            main_page_request = requests.get(
+            main_page_request = http.get(
                 streamer.streamer_url, headers=headers)
             response = main_page_request.text
             # logger.info(response)
             regex_settings = "(https://static.twitchcdn.net/config/settings.*?js|https://assets.twitch.tv/config/settings.*?.js)"
             settings_url = re.search(regex_settings, response).group(1)
 
-            settings_request = requests.get(settings_url, headers=headers)
+            settings_request = http.get(settings_url, headers=headers)
             response = settings_request.text
             regex_spade = '"spade_url":"(.*?)"'
             streamer.stream.spade_url = re.search(
@@ -287,7 +288,7 @@ class Twitch(object):
 
     def post_gql_request(self, json_data):
         try:
-            response = requests.post(
+            response = http.post(
                 GQLOperations.url,
                 json=json_data,
                 headers={
@@ -320,7 +321,7 @@ class Twitch(object):
         ):
             return self.integrity
         try:
-            response = requests.post(
+            response = http.post(
                 GQLOperations.integrity_url,
                 json={},
                 headers={
@@ -368,7 +369,7 @@ class Twitch(object):
 
     def update_client_version(self):
         try:
-            response = requests.get(URL)
+            response = http.get(URL)
             if response.status_code != 200:
                 logger.debug(
                     f"Error with update_client_version: {response.status_code}"
@@ -546,7 +547,7 @@ class Twitch(object):
                         RequestBroadcastQualitiesURL = f"https://usher.ttvnw.net/api/channel/hls/{streamers[index].username}.m3u8?sig={signature}&token={value}"
 
                         # Get list of video qualities
-                        responseBroadcastQualities = requests.get(
+                        responseBroadcastQualities = http.get(
                             RequestBroadcastQualitiesURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
@@ -565,7 +566,7 @@ class Twitch(object):
                             continue
 
                         # Get list of video URLs
-                        responseStreamURLList = requests.get(
+                        responseStreamURLList = http.get(
                             BroadcastLowestQualityURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
@@ -583,7 +584,7 @@ class Twitch(object):
                             continue
 
                         # Perform a HEAD request to simulate watching the stream
-                        responseStreamLowestQualityURL = requests.head(
+                        responseStreamLowestQualityURL = http.head(
                             StreamLowestQualityURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
@@ -595,7 +596,7 @@ class Twitch(object):
                             continue
                         # End of fix for 2024/5 API Change
                         ##################################
-                        response = requests.post(
+                        response = http.post(
                             streamers[index].stream.spade_url,
                             data=streamers[index].stream.encode_payload(),
                             headers={"User-Agent": self.user_agent},
