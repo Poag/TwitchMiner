@@ -263,7 +263,7 @@ function loadGames() {
         games.forEach(function (g) {
             var box = $('<input type="checkbox">').prop('checked', g.prioritised).attr('aria-label', 'Prioritise ' + g.name)
                 .on('change', function () { setGamePriority(g.id, this.checked, $(this)); });
-            var status = $('<span class="badge">').addClass(g.active ? 'ok' : 'idle').text(g.active ? 'Offered now' : 'Not offered');
+            var status = $('<span class="badge">').addClass(g.active ? 'ok' : 'idle').text(g.active ? (g.reward ? 'Reward now' : 'Offered now') : 'Not offered');
             body.append($('<tr>').toggleClass('is-prioritised', g.prioritised)
                 .append($('<td>').append(box))
                 .append($('<td>').text(g.name))

@@ -63,6 +63,8 @@ class Twitch(object):
         "cookies_file",
         "drops_db",
         "priority_games_cache",
+        "reward_games_cache",
+        "reward_campaigns",
         "user_agent",
         "twitch_login",
         "running",
@@ -80,6 +82,8 @@ class Twitch(object):
             os.path.join(subdir("database"), f"{username}_drops.db")
         )
         self.priority_games_cache = (0, set())
+        self.reward_games_cache = (0, set())
+        self.reward_campaigns = []
         self.user_agent = user_agent
         self.device_id = "".join(
             choice(string.ascii_letters + string.digits) for _ in range(32)
@@ -470,7 +474,10 @@ class Twitch(object):
                     elif prior == Priority.DROPS:
                         # Prioritised games (analytics page / TCPM_PRIORITY_GAMES) come first
                         for index in self.prioritise_games(streamers, streamers_index):
-                            if streamers[index].drops_condition() is True:
+                            if (
+                                streamers[index].drops_condition() is True
+                                or self.is_watching_for_reward(streamers[index])
+                            ):
                                 streamers_watching.add(index)
                                 if remaining_watch_amount() <= 0:
                                     break
@@ -774,6 +781,10 @@ class Twitch(object):
         # "data" can be null (for example when Twitch answers with only an "errors" list)
         data = (response.get("data") if isinstance(response, dict) else None) or {}
         campaigns = (data.get("currentUser") or {}).get("dropCampaigns") or []
+        # Reward campaigns (badges, emotes: no watch-time drops) sit next to the drop campaigns
+        rewards = data.get("rewardCampaignsAvailableToUser")
+        if isinstance(rewards, list):
+            self.reward_campaigns = rewards
         if not campaigns and isinstance(response, dict) and response.get("errors"):
             logger.warning(
                 f"The drops dashboard request failed, Twitch said: {str(response['errors'])[:300]}"
@@ -882,6 +893,36 @@ class Twitch(object):
             self.priority_games_cache = (time.time(), keys)
         return keys
 
+    def __priority_reward_keys(self):
+        """Lower-case ids and names of prioritised games that currently only have a reward
+        campaign (badges earned by watching, no drops). Re-read every 30 seconds."""
+        fetched_at, keys = self.reward_games_cache
+        if time.time() - fetched_at > 30:
+            keys = set()
+            try:
+                now_ms = time.time() * 1000
+                for game in self.drops_db.games():
+                    if (
+                        game["reward"]
+                        and game["active"]
+                        and game["prioritised"]
+                        and not (game["ends_at"] and game["ends_at"] < now_ms)
+                    ):
+                        keys.add(game["id"].lower())
+                        keys.add(game["name"].lower())
+            except Exception as e:
+                logger.debug(f"Could not read the reward games: {e}")
+            self.reward_games_cache = (time.time(), keys)
+        return keys
+
+    def is_watching_for_reward(self, streamer):
+        """True when the streamer is live and playing a prioritised reward-only game."""
+        keys = self.__priority_reward_keys()
+        if not keys or streamer.is_online is not True or streamer.settings.claim_drops is not True:
+            return False
+        game = streamer.stream.game or {}
+        return any(str(game.get(k, "")).lower() in keys for k in ("id", "name", "displayName"))
+
     def prioritise_games(self, streamers, indexes):
         """Streamers playing a prioritised game first; everyone else keeps their order."""
         keys = self.__priority_game_keys()
@@ -926,7 +967,7 @@ class Twitch(object):
                 continue
             covered = any(
                 s.is_online is True
-                and s.drops_condition() is True
+                and (game["reward"] or s.drops_condition() is True)
                 and self.__stream_is_game(s.stream, game)
                 for s in streamers
             )
@@ -940,6 +981,9 @@ class Twitch(object):
         json_data = copy.deepcopy(GQLOperations.GameDirectory)
         json_data["variables"]["slug"] = game.get("slug") or self.game_slug(game["name"])
         json_data["variables"]["limit"] = limit
+        if game.get("reward"):
+            # Reward campaigns (badges) need no drops on the channel, any live stream counts
+            json_data["variables"]["options"]["systemFilters"] = []
         response = self.post_gql_request(json_data)
         try:
             edges = response["data"]["game"]["streams"]["edges"]
@@ -979,6 +1023,7 @@ class Twitch(object):
             name = game.get("displayName") or game.get("name")
             if not game_id or not name:
                 continue
+            is_reward = details.get("_reward") is True
             ends_at = None
             try:
                 ends_at = calendar.timegm(parse_datetime(details["endAt"]).timetuple())
@@ -994,8 +1039,11 @@ class Twitch(object):
                     "slug": game.get("slug") or self.game_slug(name),
                     "campaigns": 0,
                     "ends_at": None,
+                    "reward": is_reward,
                 },
             )
+            if not is_reward:
+                entry["reward"] = False  # a real drops campaign wins over a reward one
             campaign_id = details.get("id")
             if campaign_id is None or campaign_id not in seen_campaigns:
                 entry["campaigns"] += 1
@@ -1006,6 +1054,39 @@ class Twitch(object):
         if games:
             self.drops_db.record_games(list(games.values()))
         return len(games)
+
+    def __reward_campaign_dicts(self):
+        """The active reward campaigns that name a game, shaped like campaign dicts for
+        __record_games. A reward campaign without a game can't be prioritised, so it is
+        mentioned once and skipped."""
+        result = []
+        now = time.time()
+        for reward in self.reward_campaigns:
+            if not isinstance(reward, dict):
+                continue
+            if reward.get("status") not in (None, "ACTIVE"):
+                continue
+            if reward.get("game"):
+                result.append(
+                    {
+                        "id": reward.get("id"),
+                        "game": reward["game"],
+                        "endAt": reward.get("endsAt"),
+                        "_reward": True,
+                    }
+                )
+            elif reward.get("id") and self.drops_db.should_notify_campaign(reward["id"]):
+                ends = reward.get("endsAt")
+                try:
+                    if ends and calendar.timegm(parse_datetime(ends).timetuple()) < now:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+                logger.info(
+                    f"Reward campaign '{reward.get('name')}' has no game attached, so it can't "
+                    "be prioritised. Add a streamer playing it to your list to earn it."
+                )
+        return result
 
     def claim_drop_once(self, drop, campaign_id, game, is_account_connected, end_at):
         """Claim a drop at most one time, ever. Returns True when the drop is claimed.
@@ -1098,6 +1179,7 @@ class Twitch(object):
                     # Games come from three places so one failing request can't leave the list empty
                     games_recorded = self.__record_games(
                         in_progress + dashboard + campaigns_details
+                        + self.__reward_campaign_dicts()
                     )
                     logger.info(
                         f"Drops sync: {len(dashboard)} active campaigns on the drops dashboard, "

@@ -11,6 +11,7 @@ All notable changes to TwitchMiner. The format follows [Keep a Changelog](https:
 - Claimed drops are reported as `Drop collected: <item> (<game>)` instead of dumping the raw drop object; failures read `Could not collect drop: …`.
 
 ### Added
+- **Reward campaigns** (e.g. Twitch's "GTAVI Launch Celebration": badges for watching a game, no watch-time drops). The miner now reads them from the drops dashboard and lists their game in **Games with drops** with a *Reward now* status. Tick the game and, with `DROPS` in `TCPM_PRIORITY`, the miner watches live channels playing it (the drops hunt also finds one, without needing drops enabled on the channel). Progress and claiming stay on Twitch's side; subscription rewards still need real subscriptions. If Twitch sends a reward campaign without a game, an info line says so.
 - **Drops hunt** (`TCPM_HUNT_STREAMERS`, off by default). When a prioritised game has drops on offer and none of your streamers is playing it, the miner searches that game's Twitch directory for a live channel with drops enabled and watches it too, up to `TCPM_HUNT_MAX_STREAMERS` (default 2) at a time. Hunted channels are temporary extras: no chat, raids or streaks, and a hunted channel that goes offline is replaced by the next one found.
 - Games remember their Twitch URL name (slug), used by the hunt.
 
