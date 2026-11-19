@@ -5,6 +5,7 @@
 
 
 import calendar
+import unicodedata
 import copy
 import re
 import logging
@@ -940,6 +941,8 @@ class Twitch(object):
     @staticmethod
     def game_slug(name):
         """The URL name of a game, as used by the Twitch directory (same rule as TwitchDropsMiner)."""
+        # Twitch's URL names are plain ASCII (Pokémon -> pokemon)
+        name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
         slug = re.sub(r"'", "", name.lower())
         slug = re.sub(r"\W+", "-", slug)
         return re.sub(r"-{2,}", "-", slug.strip("-"))
@@ -1045,10 +1048,11 @@ class Twitch(object):
             if not is_reward:
                 entry["reward"] = False  # a real drops campaign wins over a reward one
             campaign_id = details.get("id")
-            if campaign_id is None or campaign_id not in seen_campaigns:
+            # A reward campaign can list several games, so count it once per game
+            if campaign_id is None or (game_id, campaign_id) not in seen_campaigns:
                 entry["campaigns"] += 1
                 if campaign_id is not None:
-                    seen_campaigns.add(campaign_id)
+                    seen_campaigns.add((game_id, campaign_id))
             if ends_at is not None and (entry["ends_at"] is None or ends_at > entry["ends_at"]):
                 entry["ends_at"] = ends_at
         if games:
@@ -1056,7 +1060,7 @@ class Twitch(object):
         return len(games)
 
     # Twitch sends reward campaigns with game = null (its own page hardcodes the game), so the
-    # game is guessed from the campaign text. keyword -> the game as Twitch's directory has it.
+    # games are read from the campaign text. keyword -> the game as Twitch's directory has it.
     REWARD_GAME_ALIASES = {
         "gtavi": {
             "id": "1867279146",
@@ -1065,11 +1069,27 @@ class Twitch(object):
         },
     }
 
+    def __reward_games_from_text(self, reward):
+        """Games of a reward campaign that comes without one: the built-in aliases, and the
+        "Participating categories include: A, B, C" list some campaigns carry in their summary."""
+        summary = reward.get("summary") or ""
+        text = f"{reward.get('name', '')} {summary}".lower().replace(" ", "")
+        games = [g for keyword, g in self.REWARD_GAME_ALIASES.items() if keyword in text]
+        match = re.search(r"participating categories include:\s*(.+)", summary, re.IGNORECASE)
+        if match:
+            for name in match.group(1).splitlines()[0].split(","):
+                name = name.strip().rstrip(".")
+                if name:
+                    slug = self.game_slug(name)
+                    games.append({"id": f"reward:{slug}", "displayName": name, "slug": slug})
+        return games
+
     def __reward_campaign_dicts(self):
         """The reward campaigns running right now, shaped like campaign dicts for
-        __record_games. Twitch gives them no game, so it is looked up in REWARD_GAME_ALIASES;
-        one that can't be matched is mentioned once and skipped. The status Twitch sends
-        ("UNKNOWN") is useless, so the start and end dates decide."""
+        __record_games, one per game. Twitch gives them no game, so the games come from
+        REWARD_GAME_ALIASES or the summary's category list; a campaign with none is
+        mentioned once and skipped. The status Twitch sends ("UNKNOWN") is useless, so the
+        start and end dates decide."""
         result = []
         now = datetime.utcnow()
         for reward in self.reward_campaigns:
@@ -1080,13 +1100,8 @@ class Twitch(object):
                     continue
             except (KeyError, ValueError, TypeError):
                 continue
-            game = reward.get("game")
-            if not game:
-                text = f"{reward.get('name', '')} {reward.get('summary', '')}".lower().replace(" ", "")
-                game = next(
-                    (g for keyword, g in self.REWARD_GAME_ALIASES.items() if keyword in text), None
-                )
-            if game:
+            games = [reward["game"]] if reward.get("game") else self.__reward_games_from_text(reward)
+            for game in games:
                 result.append(
                     {
                         "id": reward["id"],
@@ -1095,7 +1110,9 @@ class Twitch(object):
                         "_reward": True,
                     }
                 )
-            elif self.drops_db.should_notify_campaign(reward["id"]):
+            if games:
+                continue
+            if self.drops_db.should_notify_campaign(reward["id"]):
                 logger.info(
                     f"Reward campaign '{reward.get('name')}' has no game attached and none could "
                     "be guessed, so it can't be prioritised. Put a streamer playing it on your list."
