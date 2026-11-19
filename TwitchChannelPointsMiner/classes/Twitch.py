@@ -1055,36 +1055,50 @@ class Twitch(object):
             self.drops_db.record_games(list(games.values()))
         return len(games)
 
+    # Twitch sends reward campaigns with game = null (its own page hardcodes the game), so the
+    # game is guessed from the campaign text. keyword -> the game as Twitch's directory has it.
+    REWARD_GAME_ALIASES = {
+        "gtavi": {
+            "id": "1867279146",
+            "displayName": "Grand Theft Auto VI",
+            "slug": "grand-theft-auto-vi",
+        },
+    }
+
     def __reward_campaign_dicts(self):
-        """The active reward campaigns that name a game, shaped like campaign dicts for
-        __record_games. A reward campaign without a game can't be prioritised, so it is
-        mentioned once and skipped."""
+        """The reward campaigns running right now, shaped like campaign dicts for
+        __record_games. Twitch gives them no game, so it is looked up in REWARD_GAME_ALIASES;
+        one that can't be matched is mentioned once and skipped. The status Twitch sends
+        ("UNKNOWN") is useless, so the start and end dates decide."""
         result = []
-        now = time.time()
+        now = datetime.utcnow()
         for reward in self.reward_campaigns:
-            if not isinstance(reward, dict):
+            if not isinstance(reward, dict) or not reward.get("id"):
                 continue
-            if reward.get("status") not in (None, "ACTIVE"):
+            try:
+                if not parse_datetime(reward["startsAt"]) <= now <= parse_datetime(reward["endsAt"]):
+                    continue
+            except (KeyError, ValueError, TypeError):
                 continue
-            if reward.get("game"):
+            game = reward.get("game")
+            if not game:
+                text = f"{reward.get('name', '')} {reward.get('summary', '')}".lower().replace(" ", "")
+                game = next(
+                    (g for keyword, g in self.REWARD_GAME_ALIASES.items() if keyword in text), None
+                )
+            if game:
                 result.append(
                     {
-                        "id": reward.get("id"),
-                        "game": reward["game"],
+                        "id": reward["id"],
+                        "game": game,
                         "endAt": reward.get("endsAt"),
                         "_reward": True,
                     }
                 )
-            elif reward.get("id") and self.drops_db.should_notify_campaign(reward["id"]):
-                ends = reward.get("endsAt")
-                try:
-                    if ends and calendar.timegm(parse_datetime(ends).timetuple()) < now:
-                        continue
-                except (ValueError, TypeError):
-                    pass
+            elif self.drops_db.should_notify_campaign(reward["id"]):
                 logger.info(
-                    f"Reward campaign '{reward.get('name')}' has no game attached, so it can't "
-                    "be prioritised. Add a streamer playing it to your list to earn it."
+                    f"Reward campaign '{reward.get('name')}' has no game attached and none could "
+                    "be guessed, so it can't be prioritised. Put a streamer playing it on your list."
                 )
         return result
 
